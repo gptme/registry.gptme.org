@@ -1,0 +1,40 @@
+name: Weekly Registry Regeneration
+
+on:
+  schedule:
+    # Every Monday 06:00 UTC
+    - cron: "0 6 * * 1"
+  workflow_dispatch:  # manual trigger
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate registry page
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/regenerate.py
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "gptme-registry-bot"
+          git config user.email "bot@gptme.org"
+          git add index.html
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: regenerate registry ($(date +%Y-%m-%d))"
+            git push
+          else
+            echo "No changes to commit"
+          fi
