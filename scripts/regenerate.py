@@ -29,7 +29,7 @@ def gh_search(topic: str) -> list[dict]:
         [
             "gh", "search", "repos",
             "--topic", topic,
-            "--json", "nameWithOwner,description,stargazerCount,updatedAt,primaryLanguage,repositoryTopics",
+            "--json", "fullName,description,stargazersCount,updatedAt,language",
             "--limit", "100",
             "--sort", "updated",
         ],
@@ -40,11 +40,11 @@ def gh_search(topic: str) -> list[dict]:
         print(f"gh search failed for {topic}: {result.stderr}", file=sys.stderr)
         return []
     repos = json.loads(result.stdout)
-    # Deduplicate by nameWithOwner
+    # Deduplicate by fullName
     seen = set()
     unique = []
     for r in repos:
-        key = r["nameWithOwner"]
+        key = r["fullName"]
         if key not in seen:
             seen.add(key)
             r["_topic"] = topic
@@ -52,26 +52,17 @@ def gh_search(topic: str) -> list[dict]:
     return unique
 
 
-def extract_topics(topics_list: list[dict]) -> list[str]:
-    """Extract topic names from repositoryTopics structure."""
-    names = []
-    for t in topics_list or []:
-        if isinstance(t, dict) and "name" in t:
-            names.append(t["name"])
-    return names
-
-
 def generate_page(entries: list[dict]) -> str:
     """Generate the static HTML page."""
     rows_html = ""
-    for e in sorted(entries, key=lambda x: x.get("stargazerCount", 0), reverse=True):
-        name = e.get("nameWithOwner", "unknown")
+    for e in sorted(entries, key=lambda x: x.get("stargazersCount", 0), reverse=True):
+        name = e.get("fullName", "unknown")
         desc = (e.get("description") or "").strip()
         desc = desc[:120] + "..." if len(desc) > 120 else desc
-        stars = e.get("stargazerCount", 0)
+        stars = e.get("stargazersCount", 0)
         updated = e.get("updatedAt", "")[:10] if e.get("updatedAt") else ""
-        lang = (e.get("primaryLanguage") or {}).get("name", "")
-        topic_labels = [t for t in TOPICS if t in (extract_topics(e.get("repositoryTopics")))]
+        lang = e.get("language") or ""
+        topic_labels = [t for t in TOPICS if t in e.get("_topics", [])]
         type_badge = " | ".join(
             f'<span class="tag tag-{t.split("-")[-1]}">{TOPICS[t]}</span>'
             for t in topic_labels
@@ -155,14 +146,19 @@ def generate_page(entries: list[dict]) -> str:
 
 def main():
     all_entries = []
-    seen = set()
+    by_name = {}
     for topic in TOPICS:
         repos = gh_search(topic)
         for r in repos:
-            key = r["nameWithOwner"]
-            if key not in seen:
-                seen.add(key)
+            key = r["fullName"]
+            if key not in by_name:
+                r["_topics"] = [topic]
+                by_name[key] = r
                 all_entries.append(r)
+            else:
+                # Repo carries multiple registry topics; record them all.
+                by_name[key]["_topics"].append(topic)
+    seen = by_name.keys()
 
     html = generate_page(all_entries)
     with open(OUTPUT, "w") as f:
